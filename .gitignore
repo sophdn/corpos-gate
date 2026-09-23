@@ -1,0 +1,7 @@
+# Built binary
+/corpos-gate
+/bin/
+
+# Go test artifacts
+*.test
+*.out
