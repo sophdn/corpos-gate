@@ -66,7 +66,30 @@ what it detected and where each threshold came from.
 
 **A sans-IO core.** The orchestrator injects the command runner, so every
 check's command construction is unit-tested with a fake runner that records the
-calls and spawns no process. The one external dependency is a YAML parser.
+calls and spawns no process. The one external dependency is a YAML parser. The
+suite holds itself to a 95% coverage floor, aggregate and per-package (currently
+97.6% overall; `internal/gate` 98.1%, `cmd/corpos-gate` 95.7%, `internal/gitenv`
+100%).
+
+## Prerequisites
+
+corpos-gate drives the app's own tools rather than bundling its own, so the
+tools a repo's enabled checks call must be on `PATH`. corpos-gate itself needs
+only Go to build.
+
+- **Go lint** — the `lint` check runs `golangci-lint`. Install the version CI
+  pins:
+
+  ```sh
+  go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
+  ```
+
+  The lint check finds it on `PATH` or under `$(go env GOPATH)/bin`; if it is
+  absent the check SKIPs with an install hint rather than failing.
+- **TypeScript** — the adapter drives `tsc` (typecheck), `eslint` (lint), and
+  the project's `vitest` or `jest` (coverage), each via `npx --no-install`.
+- **Python** — the adapter drives `ruff` (format + lint), `mypy` (typecheck),
+  and `pytest` with `pytest-cov` (coverage).
 
 ## Quickstart
 

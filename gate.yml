@@ -15,7 +15,7 @@ checks:
   # run the same suite twice). package_floor holds EVERY package to the bar on
   # its own, not just the aggregate.
   test:     { enabled: false, tier: pre-push }
-  coverage: { enabled: true, tier: pre-push, floor: 85, package_floor: 85, scope: "./..." }
+  coverage: { enabled: true, tier: pre-push, floor: 95, package_floor: 95, scope: "./..." }
   # go.mod carries no tool directives, so run govulncheck via a pinned module
   # (`go run …@version`) rather than a go.mod tool entry.
   vuln: { enabled: true, tier: pre-push, govulncheck_version: v1.3.0 }
