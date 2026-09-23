@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+
+      # golangci-lint is the one tool corpos-gate's lint check needs; the gate
+      # finds it on PATH or under $(go env GOPATH)/bin.
+      - name: install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
+
+      # Build the gate from source — the repo gates itself with its own binary.
+      - name: build corpos-gate
+        run: go build -o "$HOME/.local/bin/corpos-gate" ./cmd/corpos-gate
+
+      - name: put corpos-gate on PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: gate this repo with corpos-gate
+        run: corpos-gate run --tier=pre-push

@@ -1,0 +1,26 @@
+# corpos-gate gates itself with this config. Tiers are a strict superset:
+# ci ⊃ pre-push ⊃ pre-commit. pre-commit is the fast gate; pre-push adds the
+# test suite, the coverage floor, and the vulnerability scan.
+stack: go
+
+units:
+  - dir: .
+
+checks:
+  format: { enabled: true, tier: pre-commit }
+  vet:    { enabled: true, tier: pre-commit }
+  lint:   { enabled: true, tier: pre-commit }
+  build:  { enabled: true, tier: pre-commit }
+  # coverage runs `go test -coverprofile ./...`, so `test` stays off (it would
+  # run the same suite twice). package_floor holds EVERY package to the bar on
+  # its own, not just the aggregate.
+  test:     { enabled: false, tier: pre-push }
+  coverage: { enabled: true, tier: pre-push, floor: 85, package_floor: 85, scope: "./..." }
+  # go.mod carries no tool directives, so run govulncheck via a pinned module
+  # (`go run …@version`) rather than a go.mod tool entry.
+  vuln: { enabled: true, tier: pre-push, govulncheck_version: v1.3.0 }
+  # The gate guards itself: gate-tamper refuses a commit that removes a check or
+  # lowers a floor. secrets and repo-identity are cheap repo-wide hygiene.
+  gate-tamper:   { enabled: true, tier: pre-commit }
+  secrets:       { enabled: true, tier: pre-commit }
+  repo-identity: { enabled: true, tier: pre-commit }

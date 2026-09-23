@@ -1,0 +1,6 @@
+# golangci-lint (v1.62). The gate's `format` check owns gofmt, so this runs
+# golangci's default linters — errcheck, gosimple, govet, ineffassign,
+# staticcheck, unused — without re-adding a formatter (the bundled gofmt
+# disagrees with the toolchain gofmt).
+run:
+  timeout: 5m
