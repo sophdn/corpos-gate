@@ -46,8 +46,11 @@ a check can never be skipped by running a higher tier.
 `gofmt`, `go vet`, `golangci-lint`, `go build`, and `go test` with a coverage
 floor. The TypeScript adapter runs `tsc`, `eslint`, and the project's `vitest`
 or `jest`, gating on the four istanbul coverage metrics. The Python adapter runs
-`ruff` and `pytest` with a coverage floor. A missing tool fails loudly rather
-than skipping quietly, so a green line always means the check ran.
+`ruff` and `pytest` with a coverage floor. What happens when a needed tool is
+absent depends on the adapter: the Go and Python adapters report `SKIP` with an
+install hint rather than failing, while the TypeScript adapter drives its tools
+through `npx --no-install` and fails loudly. Either way a green `PASS` line
+always means the check actually ran — a skip shows as `SKIP`, never as `PASS`.
 
 **Stack-agnostic git checks.** Some checks guard any repo regardless of
 language: a secret or private key entering a diff, a repo-local git identity that
@@ -69,7 +72,11 @@ check's command construction is unit-tested with a fake runner that records the
 calls and spawns no process. The one external dependency is a YAML parser. The
 suite holds itself to a 95% coverage floor, aggregate and per-package (currently
 97.6% overall; `internal/gate` 98.1%, `cmd/corpos-gate` 95.7%, `internal/gitenv`
-100%).
+100%). Reproduce with:
+
+```sh
+go test ./... -coverprofile=cover.out && go tool cover -func=cover.out | tail -1
+```
 
 ## Prerequisites
 
