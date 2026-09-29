@@ -117,7 +117,7 @@ func runPyLint(ctx context.Context, env RunEnv, name string, tier Tier, unit Uni
 }
 
 // runPyStatic runs `mypy .` in the unit dir and FAILS on non-zero exit. If
-// mypy is not resolvable the check SKIPs with a reason — ml-training has
+// mypy is not resolvable the check SKIPs with a reason — a repo may have
 // no mypy configured yet, so this check typically stays disabled or skips.
 func runPyStatic(ctx context.Context, env RunEnv, name string, tier Tier, unit Unit) Result {
 	start := time.Now()
