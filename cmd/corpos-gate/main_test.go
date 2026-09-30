@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // customOnlyConfig disables every go check and wires two custom checks so
@@ -213,8 +216,14 @@ func TestVersionSubcommandShape(t *testing.T) {
 			if len(fields) != 4 || fields[2] != "built" {
 				t.Errorf("version line = %q, want 'corpos-gate <sha> built <unix>'", got)
 			}
-			if fields[1] != gitSHA || fields[3] != builtAtUnix {
-				t.Errorf("version line does not report the stamped vars: %q", got)
+			// The sha and built fields must each be a single non-empty token
+			// so a consumer parsing the line never matches an empty string.
+			// The exact values depend on how the binary was built (ldflags
+			// stamp vs the go-install/build-info fallback), so resolveVersion's
+			// value selection is asserted directly in the tests below rather
+			// than pinned here against the package vars.
+			if len(fields) == 4 && (fields[1] == "" || fields[3] == "") {
+				t.Errorf("version line has an empty field: %q", got)
 			}
 			if stderr.Len() != 0 {
 				t.Errorf("version wrote to stderr: %q", stderr.String())
@@ -232,5 +241,82 @@ func TestVersionDefaultsAreNonEmpty(t *testing.T) {
 	}
 	if got := versionLine(); len(strings.Fields(got)) != 4 {
 		t.Errorf("versionLine() = %q, want four fields", got)
+	}
+}
+
+// The ldflags -X stamp is authoritative: when gitSHA is set, resolveVersion
+// returns it verbatim and ignores the build info entirely, so a Makefile/CI
+// build keeps reporting its injected SHA.
+func TestResolveVersionStampWins(t *testing.T) {
+	origSHA, origBuilt := gitSHA, builtAtUnix
+	defer func() { gitSHA, builtAtUnix = origSHA, origBuilt }()
+	gitSHA, builtAtUnix = "abc1234", "1700000000"
+
+	info := &debug.BuildInfo{
+		Main: debug.Module{Version: "v1.2.3"},
+		Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "deadbeefcafe"},
+			{Key: "vcs.time", Value: "2026-01-02T03:04:05Z"},
+		},
+	}
+	if sha, built := resolveVersion(info, true); sha != "abc1234" || built != "1700000000" {
+		t.Errorf("stamped build: got (%q, %q), want the ldflags stamp verbatim", sha, built)
+	}
+}
+
+// An un-stamped binary that carries embedded VCS metadata (the `go install`
+// case) reports the commit revision and the commit time as a unix timestamp.
+func TestResolveVersionFallbackToVCS(t *testing.T) {
+	origSHA, origBuilt := gitSHA, builtAtUnix
+	defer func() { gitSHA, builtAtUnix = origSHA, origBuilt }()
+	gitSHA, builtAtUnix = "unversioned", "0"
+
+	info := &debug.BuildInfo{
+		Main: debug.Module{Version: "v0.0.0-20260101000000-deadbeefcafe"},
+		Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "deadbeefcafe"},
+			{Key: "vcs.time", Value: "2026-01-02T03:04:05Z"},
+		},
+	}
+	sha, built := resolveVersion(info, true)
+	if sha != "deadbeefcafe" {
+		t.Errorf("vcs fallback sha = %q, want the vcs.revision", sha)
+	}
+	wantUnix := strconv.FormatInt(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC).Unix(), 10)
+	if built != wantUnix {
+		t.Errorf("vcs fallback built = %q, want %q (vcs.time as unix)", built, wantUnix)
+	}
+}
+
+// An un-stamped binary with no VCS settings (e.g. `go install module@version`
+// where only the module pseudo-version is embedded) reports that version.
+func TestResolveVersionFallbackToModuleVersion(t *testing.T) {
+	origSHA, origBuilt := gitSHA, builtAtUnix
+	defer func() { gitSHA, builtAtUnix = origSHA, origBuilt }()
+	gitSHA, builtAtUnix = "unversioned", "0"
+
+	info := &debug.BuildInfo{Main: debug.Module{Version: "v0.0.0-20260101000000-deadbeefcafe"}}
+	sha, built := resolveVersion(info, true)
+	if sha != "v0.0.0-20260101000000-deadbeefcafe" {
+		t.Errorf("module-version fallback sha = %q, want the pseudo-version", sha)
+	}
+	if built != "0" {
+		t.Errorf("module-version fallback built = %q, want the 0 default (no vcs.time)", built)
+	}
+}
+
+// Without usable build info (ReadBuildInfo failed, or a bare `(devel)` build),
+// the line stays the honest "unversioned"/"0" default rather than inventing one.
+func TestResolveVersionUnstampedStaysDefault(t *testing.T) {
+	origSHA, origBuilt := gitSHA, builtAtUnix
+	defer func() { gitSHA, builtAtUnix = origSHA, origBuilt }()
+	gitSHA, builtAtUnix = "unversioned", "0"
+
+	if sha, built := resolveVersion(nil, false); sha != "unversioned" || built != "0" {
+		t.Errorf("no build info: got (%q, %q), want the unversioned defaults", sha, built)
+	}
+	devel := &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}
+	if sha, built := resolveVersion(devel, true); sha != "unversioned" || built != "0" {
+		t.Errorf("(devel) build: got (%q, %q), want to stay unversioned", sha, built)
 	}
 }

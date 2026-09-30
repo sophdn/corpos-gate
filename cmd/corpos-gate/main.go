@@ -22,7 +22,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sophdn/corpos-gate/internal/gate"
 )
@@ -35,6 +38,42 @@ var (
 	builtAtUnix = "0"
 )
 
+// resolveVersion returns the (sha, builtAtUnix) pair the version line reports.
+// The ldflags -X stamp is authoritative: whenever gitSHA is set it is returned
+// verbatim, so a Makefile/CI build reports its injected SHA unchanged. Only an
+// un-stamped binary (gitSHA still the "unversioned" default, i.e. `go install
+// module@version` or a bare `go build`) falls back to the build metadata the Go
+// toolchain embeds: the VCS revision/time when present, else the module
+// version. It takes the BuildInfo explicitly so the fallback is unit-testable
+// without depending on how the test binary itself was built.
+func resolveVersion(info *debug.BuildInfo, ok bool) (string, string) {
+	sha, builtAt := gitSHA, builtAtUnix
+	if sha != "unversioned" || !ok || info == nil {
+		return sha, builtAt
+	}
+	var vcsRev, vcsTime string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			vcsRev = s.Value
+		case "vcs.time":
+			vcsTime = s.Value
+		}
+	}
+	switch {
+	case vcsRev != "":
+		sha = vcsRev
+	case info.Main.Version != "" && info.Main.Version != "(devel)":
+		sha = info.Main.Version
+	}
+	if vcsTime != "" {
+		if t, err := time.Parse(time.RFC3339, vcsTime); err == nil {
+			builtAt = strconv.FormatInt(t.Unix(), 10)
+		}
+	}
+	return sha, builtAt
+}
+
 func main() {
 	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -42,7 +81,8 @@ func main() {
 // versionLine is the exact `corpos-gate version` stdout payload. The exact
 // format is pinned by a test.
 func versionLine() string {
-	return fmt.Sprintf("corpos-gate %s built %s\n", gitSHA, builtAtUnix)
+	sha, builtAt := resolveVersion(debug.ReadBuildInfo())
+	return fmt.Sprintf("corpos-gate %s built %s\n", sha, builtAt)
 }
 
 // runCLI is the testable entry point: it takes the arg slice (without
