@@ -9,7 +9,7 @@ units:
 checks:
   format: { enabled: true, tier: pre-commit }
   vet:    { enabled: true, tier: pre-commit }
-  lint:   { enabled: true, tier: pre-commit }
+  lint:   { enabled: true, tier: pre-commit, golangci_version: v2.14.0 }
   build:  { enabled: true, tier: pre-commit }
   # coverage runs `go test -coverprofile ./...`, so `test` stays off (it would
   # run the same suite twice). package_floor holds EVERY package to the bar on

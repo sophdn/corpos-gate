@@ -60,7 +60,7 @@ func buildGoCheck(name, label string, tier Tier, cc CheckConfig, unit Unit) Chec
 		}}
 	case "lint":
 		return funcCheck{label, tier, func(ctx context.Context, env RunEnv) Result {
-			return runLint(ctx, env, label, tier, unit)
+			return runLint(ctx, env, label, tier, unit, cc)
 		}}
 	case "build":
 		return funcCheck{label, tier, func(ctx context.Context, env RunEnv) Result {
@@ -182,25 +182,40 @@ func raceScope(ctx context.Context, env RunEnv, tier Tier, unit Unit, race bool,
 	return pkgs, false, nil
 }
 
-// runLint locates golangci-lint (PATH → GOPATH/bin → ~/go/bin), runs
-// `golangci-lint config verify`, then `golangci-lint run ./...`. If the
-// binary is absent it SKIPs with a warning rather than hard-failing.
-func runLint(ctx context.Context, env RunEnv, name string, tier Tier, unit Unit) Result {
+// runLint runs `golangci-lint config verify`, then
+// `golangci-lint run ./...`.
+//
+// When cc.GolangciVersion is set, both commands run the pinned release via
+// `go run <module>@<version>`, the same way runVuln pins govulncheck. The repo
+// then lints with exactly the version its config was written for, whatever is
+// installed on the machine, and the binary cannot be missing or drift from the
+// pin. Each repo moves to a new release by changing its own pin.
+//
+// Without a pin it falls back to the golangci-lint on PATH (→ GOPATH/bin →
+// ~/go/bin). A missing binary FAILS the check: a lint stage that passes
+// because the linter never ran is a fail-open gate.
+func runLint(ctx context.Context, env RunEnv, name string, tier Tier, unit Unit, cc CheckConfig) Result {
 	start := time.Now()
-	bin, found := env.lookup("golangci-lint")
-	if !found {
-		return Result{
-			Name: name, Tier: tier, Duration: time.Since(start),
-			OK: true, Skipped: true,
-			Output: "golangci-lint not installed — skipping (install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)",
+	bin, prefix := "go", []string{"run", golangciPackage(cc.GolangciVersion)}
+	if cc.GolangciVersion == "" {
+		found := false
+		bin, found = env.lookup("golangci-lint")
+		if !found {
+			return Result{
+				Name: name, Tier: tier, Duration: time.Since(start),
+				OK:     false,
+				Output: "golangci-lint not installed, and the lint check sets no golangci_version pin. Set golangci_version on the lint check in gate.yml (recommended), or install the release the repo's .golangci.yml targets.",
+			}
 		}
+		prefix = nil
 	}
+	lintArgs := func(args ...string) []string { return append(append([]string{}, prefix...), args...) }
 	dir := unitDir(env, unit)
-	// config verify FIRST: a v2-syntax key in a v1.62 binary
-	// silently falls back to flag-every-identifier behavior, so verify
-	// fails loudly on the actionable config error rather than the
-	// misleading downstream `run` output.
-	vOut, vCode, vErr := env.runner()(ctx, dir, bin, "config", "verify")
+	// config verify FIRST: a config key the running release does
+	// not know silently falls back to default behavior, so verify fails
+	// loudly on the actionable config error rather than the misleading
+	// downstream `run` output.
+	vOut, vCode, vErr := env.runner()(ctx, dir, bin, lintArgs("config", "verify")...)
 	if vErr != nil {
 		return Result{Name: name, Tier: tier, Duration: time.Since(start), Output: vOut, Err: vErr}
 	}
@@ -210,10 +225,21 @@ func runLint(ctx context.Context, env RunEnv, name string, tier Tier, unit Unit)
 			OK: false, Output: "golangci-lint config verify failed:\n" + vOut,
 		}
 	}
-	out, code, err := env.runner()(ctx, dir, bin, "run", "./...")
+	out, code, err := env.runner()(ctx, dir, bin, lintArgs("run", "./...")...)
 	res := Result{Name: name, Tier: tier, Duration: time.Since(start), Output: out, Err: err}
 	res.OK = err == nil && code == 0
 	return res
+}
+
+// golangciPackage returns the `go run` target for a pinned golangci-lint
+// release. Releases from v2 on live under a /vN module path; v1 does not.
+func golangciPackage(version string) string {
+	const base = "github.com/golangci/golangci-lint"
+	major, _, _ := strings.Cut(strings.TrimPrefix(version, "v"), ".")
+	if major == "" || major == "0" || major == "1" {
+		return base + "/cmd/golangci-lint@" + version
+	}
+	return base + "/v" + major + "/cmd/golangci-lint@" + version
 }
 
 // runCoverage runs `go test [-tags] [-race] -coverprofile=<tmp> <scope>`,
@@ -539,7 +565,8 @@ func runVuln(ctx context.Context, env RunEnv, name string, tier Tier, unit Unit,
 // build tag go-mutesting cannot pass itself. The tool mutates files IN
 // PLACE under the unit dir and re-runs the suite once per mutant, so it is
 // slow and on-demand: keep it `enabled: false` in gate.yml and turn it on
-// deliberately. If the binary is absent the check SKIPs (like runLint).
+// deliberately. If the binary is absent the check SKIPs: it is report-only,
+// so a skip cannot hide a failure.
 func runMutation(ctx context.Context, env RunEnv, name string, tier Tier, unit Unit, cc CheckConfig) Result {
 	start := time.Now()
 	bin, found := env.lookup("go-mutesting")

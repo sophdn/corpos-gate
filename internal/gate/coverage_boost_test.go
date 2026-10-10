@@ -451,8 +451,9 @@ func TestRunEnvDefaults(t *testing.T) {
 // ── core.go: a SKIP result drives the SKIP status line ──────────────────
 
 func TestRunStatusSkip(t *testing.T) {
-	// lint with golangci-lint absent SKIPs; Run must render its SKIP status.
-	cfg := goCfg(map[string]CheckConfig{"lint": {Enabled: true, Tier: "pre-commit"}})
+	// mutation with go-mutesting absent SKIPs (it is report-only); Run must
+	// render its SKIP status. (lint no longer skips: a missing linter fails.)
+	cfg := goCfg(map[string]CheckConfig{"mutation": {Enabled: true, Tier: "pre-commit"}})
 	f := &fakeRunner{}
 	env := f.env("/repo")
 	var buf strings.Builder
@@ -460,7 +461,7 @@ func TestRunStatusSkip(t *testing.T) {
 	env.LookupTool = func(string) (string, bool) { return "", false } // absent → skip
 	results, ok, err := Run(context.Background(), cfg, TierPreCommit, env, nil)
 	if err != nil || !ok {
-		t.Fatalf("a skipped lint should leave the run green: ok=%v err=%v", ok, err)
+		t.Fatalf("a skipped check should leave the run green: ok=%v err=%v", ok, err)
 	}
 	if len(results) != 1 || !results[0].Skipped {
 		t.Fatalf("expected one skipped result: %+v", results)

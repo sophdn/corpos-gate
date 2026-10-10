@@ -1,6 +1,39 @@
-# golangci-lint (v1.62). The gate's `format` check owns gofmt, so this runs
-# golangci's default linters — errcheck, gosimple, govet, ineffassign,
-# staticcheck, unused — without re-adding a formatter (the bundled gofmt
-# disagrees with the toolchain gofmt).
-run:
-  timeout: 5m
+# golangci-lint v2 config. The release is pinned by golangci_version on the
+# lint check in gate.yml, so the gate runs exactly that version via `go run`.
+#
+# This runs golangci's standard linters — errcheck, govet, ineffassign,
+# staticcheck, unused. No formatters are enabled: the gate's `format` check
+# runs the toolchain gofmt as the single formatting authority.
+#
+# Migrated from v1.62 with `golangci-lint migrate`. v1's default exclusions are
+# the four presets below, and staticcheck keeps v1's set (see its setting).
+version: "2"
+
+linters:
+  settings:
+    staticcheck:
+      # v2's staticcheck absorbs v1's gosimple (S1) and stylecheck (ST1)
+      # linters and adds quickfix (QF) checks. v1's defaults ran staticcheck
+      # (SA) and gosimple (S1) but not stylecheck, so this keeps that set.
+      checks:
+        - SA*
+        - S1*
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

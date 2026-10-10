@@ -109,6 +109,11 @@ type CheckConfig struct {
 	// dependency-free (no govulncheck tool directive) — the go-run path
 	// needs no go.mod entry. Empty → the default `go tool govulncheck`.
 	GovulncheckVersion string `yaml:"govulncheck_version,omitempty"`
+	// GolangciVersion, when set on the Go lint check, makes it run
+	// golangci-lint via `go run github.com/golangci/golangci-lint[/vN]/cmd/golangci-lint@<version>`
+	// instead of the binary on PATH, so the linter always matches the
+	// repo's config. Empty → the PATH binary, and a missing binary fails.
+	GolangciVersion string `yaml:"golangci_version,omitempty"`
 	// Denylist, on the `secrets` check, names the repo-local file of
 	// project-specific PII regexes (one per line, `#` comments ignored) scanned
 	// in addition to the always-on secret patterns. Empty → the default

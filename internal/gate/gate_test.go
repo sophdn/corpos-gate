@@ -316,16 +316,58 @@ func TestLintFoundAndSkip(t *testing.T) {
 	if len(fVfy.calls) != 1 {
 		t.Fatalf("lint should stop after a failed config verify (1 call), got %d", len(fVfy.calls))
 	}
-	// Absent: SKIP, not fail, and no command run.
+	// Absent with no pin: FAIL (fail-closed), not skip, and no command run.
 	f2 := &fakeRunner{}
 	env2 := f2.env("/repo")
 	env2.LookupTool = func(string) (string, bool) { return "", false }
 	r2 := findCheck(t, GoChecks(cfg), "lint").Run(context.Background(), env2)
-	if !r2.Skipped || !r2.OK {
-		t.Fatalf("lint absent should skip+ok: %+v", r2)
+	if r2.OK || r2.Skipped {
+		t.Fatalf("lint absent with no pin should FAIL, not skip: %+v", r2)
+	}
+	if !strings.Contains(r2.Output, "golangci_version") {
+		t.Fatalf("the failure should name the pin to set: %q", r2.Output)
 	}
 	if len(f2.calls) != 0 {
 		t.Fatalf("lint absent should run no command, ran %d", len(f2.calls))
+	}
+}
+
+// TestLintPinnedRunsGoRun proves a golangci_version pin runs the pinned release
+// through `go run` and never consults PATH, so a missing or different installed
+// binary cannot change the result.
+func TestLintPinnedRunsGoRun(t *testing.T) {
+	cfg := goCfg(map[string]CheckConfig{"lint": {Enabled: true, Tier: "pre-commit", GolangciVersion: "v2.14.0"}})
+	f := &fakeRunner{}
+	env := f.env("/repo")
+	env.LookupTool = func(name string) (string, bool) {
+		t.Fatalf("a pinned lint must not look up %q on PATH", name)
+		return "", false
+	}
+	r := findCheck(t, GoChecks(cfg), "lint").Run(context.Background(), env)
+	if !r.OK || r.Skipped {
+		t.Fatalf("pinned lint should pass: %+v", r)
+	}
+	pkg := "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0"
+	want := []string{"run " + pkg + " config verify", "run " + pkg + " run ./..."}
+	if len(f.calls) != 2 {
+		t.Fatalf("want 2 calls, got %d", len(f.calls))
+	}
+	for i, w := range want {
+		if f.calls[i].name != "go" || strings.Join(f.calls[i].args, " ") != w {
+			t.Fatalf("call %d = %s %v, want go %s", i, f.calls[i].name, f.calls[i].args, w)
+		}
+	}
+}
+
+func TestGolangciPackage(t *testing.T) {
+	for in, want := range map[string]string{
+		"v1.62.2": "github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2",
+		"v2.14.0": "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0",
+		"v3.0.1":  "github.com/golangci/golangci-lint/v3/cmd/golangci-lint@v3.0.1",
+	} {
+		if got := golangciPackage(in); got != want {
+			t.Errorf("golangciPackage(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -452,7 +494,7 @@ func TestMutationReportOnly(t *testing.T) {
 	// cross-repo hardcoded default is gone (a scopeless mutation check SKIPs).
 	cfgScoped := goCfg(map[string]CheckConfig{"mutation": {Enabled: true, Tier: "pre-push", Scope: "internal/foo"}})
 
-	// Tool absent → OK + Skipped, no command run (like runLint).
+	// Tool absent → OK + Skipped, no command run (mutation is report-only).
 	fAbsent := &fakeRunner{}
 	envAbsent := fAbsent.env("/repo")
 	envAbsent.LookupTool = func(string) (string, bool) { return "", false }

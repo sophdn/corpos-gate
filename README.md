@@ -84,15 +84,18 @@ corpos-gate drives the app's own tools rather than bundling its own, so the
 tools a repo's enabled checks call must be on `PATH`. corpos-gate itself needs
 only Go to build.
 
-- **Go lint** — the `lint` check runs `golangci-lint`. Install the version CI
-  pins:
+- **Go lint** — the `lint` check runs `golangci-lint`. Pin the release on the
+  check, and the gate runs exactly that version via `go run`, so nothing needs
+  installing:
 
-  ```sh
-  go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
+  ```yaml
+  checks:
+    lint: { enabled: true, tier: pre-commit, golangci_version: v2.14.0 }
   ```
 
-  The lint check finds it on `PATH` or under `$(go env GOPATH)/bin`; if it is
-  absent the check SKIPs with an install hint rather than failing.
+  Without a pin, the check uses the `golangci-lint` on `PATH` or under
+  `$(go env GOPATH)/bin`, and fails if it is absent: a lint stage that passes
+  because the linter never ran would hide every finding.
 - **TypeScript** — the adapter drives `tsc` (typecheck), `eslint` (lint), and
   the project's `vitest` or `jest` (coverage), each via `npx --no-install`.
 - **Python** — the adapter drives `ruff` (format + lint), `mypy` (typecheck),

@@ -79,8 +79,7 @@ func buildPyCheck(name, label string, tier Tier, cc CheckConfig, unit Unit) Chec
 
 // runPyFormat runs `ruff format --check .` in the unit dir and FAILS on
 // non-zero exit (a formatting-drift gate — ruff exits non-zero when a file
-// would be reformatted). If ruff is absent the check SKIPs with a reason,
-// mirroring the go adapter's runLint.
+// would be reformatted). If ruff is absent the check SKIPs with a reason.
 func runPyFormat(ctx context.Context, env RunEnv, name string, tier Tier, unit Unit) Result {
 	start := time.Now()
 	if _, found := env.lookup("ruff"); !found {
