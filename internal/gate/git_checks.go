@@ -64,78 +64,95 @@ func newGateTamperCheck(cc CheckConfig) Check {
 	return funcCheck{"gate-tamper", tier, func(ctx context.Context, env RunEnv) Result {
 		start := time.Now()
 		res := Result{Name: "gate-tamper", Tier: tier}
-		curData, err := os.ReadFile(filepath.Join(env.RepoRoot, gateConfigFile))
-		if err != nil {
-			// No gate.yml in the working tree — nothing to guard.
-			res.OK, res.Duration = true, time.Since(start)
-			res.Output = "no gate.yml in the working tree — nothing to guard"
-			return res
-		}
-		cur, perr := parseGateForTamper(curData)
-		if perr != nil {
-			// FAIL on an unparseable staged gate.yml — never pass silently.
-			res.OK, res.Duration = false, time.Since(start)
-			res.Output = "cannot parse the staged gate.yml (refusing to pass on unexpected syntax): " + perr.Error()
-			return res
-		}
-		headData, code, gerr := env.runner()(ctx, env.RepoRoot, "git", "show", "HEAD:"+gateConfigFile)
-		if gerr != nil {
-			res.Err, res.Duration = gerr, time.Since(start)
-			return res
-		}
-		if code != 0 {
-			// No HEAD, or gate.yml is new at this commit — nothing to compare.
-			res.OK, res.Duration = true, time.Since(start)
-			res.Output = "no gate.yml at HEAD — new file, nothing to compare"
-			return res
-		}
-		head, herr := parseGateForTamper([]byte(headData))
-		if herr != nil {
-			// A baseline we cannot parse cannot have been weakened FROM in a
-			// measurable way; do not block on it (the staged-side parse above is
-			// the guard that matters).
-			res.OK, res.Duration = true, time.Since(start)
-			res.Output = "HEAD gate.yml is unparseable — cannot compare, allowing"
-			return res
-		}
-		var viol []string
-		for name, hc := range head.Checks {
-			cur2, ok := cur.Checks[name]
-			if hc.Enabled && (!ok || !cur2.Enabled) {
-				where := "disabled"
-				if !ok {
-					where = "removed"
-				}
-				viol = append(viol, fmt.Sprintf("check %q was enabled at HEAD and is now %s", name, where))
-			}
-			if ok {
-				if hc.Floor > 0 && cur2.Floor < hc.Floor {
-					viol = append(viol, fmt.Sprintf("check %q coverage floor lowered %d → %d", name, hc.Floor, cur2.Floor))
-				}
-				if hc.PackageFloor > 0 && cur2.PackageFloor < hc.PackageFloor {
-					viol = append(viol, fmt.Sprintf("check %q package_floor lowered %d → %d", name, hc.PackageFloor, cur2.PackageFloor))
-				}
-			}
-		}
-		curCustom := map[string]bool{}
-		for _, c := range cur.Custom {
-			curCustom[c.Name] = true
-		}
-		for _, hc := range head.Custom {
-			if !curCustom[hc.Name] {
-				viol = append(viol, fmt.Sprintf("custom check %q removed", hc.Name))
-			}
-		}
+		v := gateTamperVerdict(ctx, env)
+		res.OK, res.Output, res.Err = v.ok, v.output, v.err
 		res.Duration = time.Since(start)
-		if len(viol) > 0 {
-			res.OK = false
-			res.Output = "gate.yml weakened vs HEAD — refusing (a deliberate change lands with `git commit --no-verify`):\n  " +
-				strings.Join(viol, "\n  ")
-			return res
-		}
-		res.OK = true
 		return res
 	}}
+}
+
+// tamperVerdict is the gate-tamper outcome: pass or fail, the output text, and
+// an exec error from git.
+type tamperVerdict struct {
+	ok     bool
+	output string
+	err    error
+}
+
+// gateTamperVerdict compares the working-tree gate.yml with HEAD's and returns
+// the gate-tamper outcome.
+func gateTamperVerdict(ctx context.Context, env RunEnv) tamperVerdict {
+	curData, rerr := os.ReadFile(filepath.Join(env.RepoRoot, gateConfigFile))
+	if rerr != nil {
+		// No gate.yml in the working tree — nothing to guard.
+		return tamperVerdict{true, "no gate.yml in the working tree — nothing to guard", nil}
+	}
+	cur, perr := parseGateForTamper(curData)
+	if perr != nil {
+		// FAIL on an unparseable staged gate.yml — never pass silently.
+		return tamperVerdict{false, "cannot parse the staged gate.yml (refusing to pass on unexpected syntax): " + perr.Error(), nil}
+	}
+	headData, code, gerr := env.runner()(ctx, env.RepoRoot, "git", "show", "HEAD:"+gateConfigFile)
+	if gerr != nil {
+		return tamperVerdict{false, "", gerr}
+	}
+	if code != 0 {
+		// No HEAD, or gate.yml is new at this commit — nothing to compare.
+		return tamperVerdict{true, "no gate.yml at HEAD — new file, nothing to compare", nil}
+	}
+	head, herr := parseGateForTamper([]byte(headData))
+	if herr != nil {
+		// A baseline we cannot parse cannot have been weakened FROM in a
+		// measurable way; do not block on it (the staged-side parse above is
+		// the guard that matters).
+		return tamperVerdict{true, "HEAD gate.yml is unparseable — cannot compare, allowing", nil}
+	}
+	if viol := gateWeakenings(head, cur); len(viol) > 0 {
+		return tamperVerdict{false, "gate.yml weakened vs HEAD — refusing (a deliberate change lands with `git commit --no-verify`):\n  " +
+			strings.Join(viol, "\n  "), nil}
+	}
+	return tamperVerdict{true, "", nil}
+}
+
+// gateWeakenings lists every way cur weakens head: an enabled check removed or
+// disabled, a coverage floor or package_floor lowered, a custom check removed.
+func gateWeakenings(head, cur *Config) []string {
+	var viol []string
+	for name, hc := range head.Checks {
+		cc, ok := cur.Checks[name]
+		if !ok {
+			if hc.Enabled {
+				viol = append(viol, fmt.Sprintf("check %q was enabled at HEAD and is now removed", name))
+			}
+			continue
+		}
+		viol = append(viol, checkWeakenings(name, hc, cc)...)
+	}
+	curCustom := map[string]bool{}
+	for _, c := range cur.Custom {
+		curCustom[c.Name] = true
+	}
+	for _, hc := range head.Custom {
+		if !curCustom[hc.Name] {
+			viol = append(viol, fmt.Sprintf("custom check %q removed", hc.Name))
+		}
+	}
+	return viol
+}
+
+// checkWeakenings lists how one check present in both versions was weakened.
+func checkWeakenings(name string, head, cur CheckConfig) []string {
+	var viol []string
+	if head.Enabled && !cur.Enabled {
+		viol = append(viol, fmt.Sprintf("check %q was enabled at HEAD and is now disabled", name))
+	}
+	if head.Floor > 0 && cur.Floor < head.Floor {
+		viol = append(viol, fmt.Sprintf("check %q coverage floor lowered %d → %d", name, head.Floor, cur.Floor))
+	}
+	if head.PackageFloor > 0 && cur.PackageFloor < head.PackageFloor {
+		viol = append(viol, fmt.Sprintf("check %q package_floor lowered %d → %d", name, head.PackageFloor, cur.PackageFloor))
+	}
+	return viol
 }
 
 // parseGateForTamper leniently unmarshals a gate.yml into its Config shape for

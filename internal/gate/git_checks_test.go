@@ -520,3 +520,37 @@ checks:
 		t.Fatalf("repo-identity not parsed: %+v", cfg.Checks["repo-identity"])
 	}
 }
+
+// TestGateTamperOutputGolden pins the exact Output of each gate-tamper outcome,
+// so a restructure of the check cannot drift a message.
+func TestGateTamperOutputGolden(t *testing.T) {
+	const prefix = "gate.yml weakened vs HEAD — refusing (a deliberate change lands with `git commit --no-verify`):\n  "
+	cases := []struct {
+		name, cur, head string
+		headCode        int
+		wantOK          bool
+		want            string
+	}{
+		{"clean", headGate, headGate, 0, true, ""},
+		{"no working tree file", "", headGate, 0, true, "no gate.yml in the working tree — nothing to guard"},
+		{"new at HEAD", headGate, "", 128, true, "no gate.yml at HEAD — new file, nothing to compare"},
+		{"unparseable HEAD", headGate, "::: not yaml :::", 0, true, "HEAD gate.yml is unparseable — cannot compare, allowing"},
+		{"check removed", "stack: go\nchecks:\n  vet: { enabled: true }\ncustom:\n  - { name: pii, cmd: \"true\" }\n", headGate, 0, false,
+			prefix + `check "coverage" was enabled at HEAD and is now removed`},
+		{"check disabled keeps floors", "stack: go\nchecks:\n  coverage: { enabled: false, floor: 95, package_floor: 95 }\n  vet: { enabled: true }\ncustom:\n  - { name: pii, cmd: \"true\" }\n", headGate, 0, false,
+			prefix + `check "coverage" was enabled at HEAD and is now disabled`},
+		{"floor lowered", "stack: go\nchecks:\n  coverage: { enabled: true, floor: 80, package_floor: 95 }\n  vet: { enabled: true }\ncustom:\n  - { name: pii, cmd: \"true\" }\n", headGate, 0, false,
+			prefix + `check "coverage" coverage floor lowered 95 → 80`},
+		{"floor and package floor lowered", "stack: go\nchecks:\n  coverage: { enabled: true, floor: 80, package_floor: 70 }\n  vet: { enabled: true }\ncustom:\n  - { name: pii, cmd: \"true\" }\n", headGate, 0, false,
+			prefix + "check \"coverage\" coverage floor lowered 95 → 80\n  check \"coverage\" package_floor lowered 95 → 70"},
+		{"disabled check at HEAD may be removed", "stack: go\nchecks:\n  vet: { enabled: true }\n", "stack: go\nchecks:\n  vet: { enabled: true }\n  lint: { enabled: false }\n", 0, true, ""},
+		{"custom removed", "stack: go\nchecks:\n  coverage: { enabled: true, floor: 95, package_floor: 95 }\n  vet: { enabled: true }\n", headGate, 0, false,
+			prefix + `custom check "pii" removed`},
+	}
+	for _, c := range cases {
+		r := runGateTamper(t, c.cur, c.head, c.headCode, nil)
+		if r.OK != c.wantOK || r.Output != c.want || r.Name != "gate-tamper" || r.Tier != TierPreCommit {
+			t.Errorf("%s: got ok=%v name=%q tier=%v output=%q; want ok=%v output=%q", c.name, r.OK, r.Name, r.Tier, r.Output, c.wantOK, c.want)
+		}
+	}
+}

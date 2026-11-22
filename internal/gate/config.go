@@ -195,54 +195,80 @@ func (c *Config) validate() error {
 		}
 	}
 	for name, cc := range c.Checks {
-		if !knownChecks[name] {
-			return fmt.Errorf("unknown check %q", name)
-		}
-		if _, err := ParseTier(cc.Tier); err != nil {
-			return fmt.Errorf("check %q: %w", name, err)
-		}
-		for metric := range cc.Thresholds {
-			if !coverageMetrics[metric] {
-				return fmt.Errorf("check %q: unknown coverage metric %q in thresholds (want statements, branches, functions, or lines)", name, metric)
-			}
-		}
-		if cc.Runner != "" && !coverageRunners[cc.Runner] {
-			return fmt.Errorf("check %q: unknown coverage runner %q (want vitest or jest)", name, cc.Runner)
+		if err := validateCheck(name, cc); err != nil {
+			return err
 		}
 	}
 	for i, cu := range c.Custom {
-		if cu.Name == "" {
-			return fmt.Errorf("custom %d: name is required", i)
-		}
-		if cu.Cmd == "" {
-			return fmt.Errorf("custom %q: cmd is required", cu.Name)
-		}
-		if _, err := ParseTier(cu.Tier); err != nil {
-			return fmt.Errorf("custom %q: %w", cu.Name, err)
+		if err := validateCustom(i, cu); err != nil {
+			return err
 		}
 	}
 	for i, r := range c.Rules {
-		if r.Name == "" {
-			return fmt.Errorf("rule %d: name is required", i)
+		if err := validateRule(i, r); err != nil {
+			return err
 		}
-		if r.Pattern == "" {
-			return fmt.Errorf("rule %q: pattern is required", r.Name)
+	}
+	return nil
+}
+
+// validateCheck checks one built-in check's name, tier, coverage thresholds
+// and coverage runner.
+func validateCheck(name string, cc CheckConfig) error {
+	if !knownChecks[name] {
+		return fmt.Errorf("unknown check %q", name)
+	}
+	if _, err := ParseTier(cc.Tier); err != nil {
+		return fmt.Errorf("check %q: %w", name, err)
+	}
+	for metric := range cc.Thresholds {
+		if !coverageMetrics[metric] {
+			return fmt.Errorf("check %q: unknown coverage metric %q in thresholds (want statements, branches, functions, or lines)", name, metric)
 		}
-		if _, err := regexp.Compile(r.Pattern); err != nil {
-			return fmt.Errorf("rule %q: invalid pattern: %w", r.Name, err)
-		}
-		if r.Sense != "must_match" && r.Sense != "must_not_match" {
-			return fmt.Errorf("rule %q: sense must be must_match or must_not_match", r.Name)
-		}
-		if r.Scope != "" && r.Scope != "tree" && r.Scope != "diff" {
-			return fmt.Errorf("rule %q: scope must be tree or diff", r.Name)
-		}
-		if r.Message == "" {
-			return fmt.Errorf("rule %q: message is required", r.Name)
-		}
-		if _, err := ParseTier(r.Tier); err != nil {
-			return fmt.Errorf("rule %q: %w", r.Name, err)
-		}
+	}
+	if cc.Runner != "" && !coverageRunners[cc.Runner] {
+		return fmt.Errorf("check %q: unknown coverage runner %q (want vitest or jest)", name, cc.Runner)
+	}
+	return nil
+}
+
+// validateCustom checks the i-th custom check's name, command and tier.
+func validateCustom(i int, cu Custom) error {
+	if cu.Name == "" {
+		return fmt.Errorf("custom %d: name is required", i)
+	}
+	if cu.Cmd == "" {
+		return fmt.Errorf("custom %q: cmd is required", cu.Name)
+	}
+	if _, err := ParseTier(cu.Tier); err != nil {
+		return fmt.Errorf("custom %q: %w", cu.Name, err)
+	}
+	return nil
+}
+
+// validateRule checks the i-th rule: name, a compilable pattern, sense, scope,
+// message and tier.
+func validateRule(i int, r Rule) error {
+	if r.Name == "" {
+		return fmt.Errorf("rule %d: name is required", i)
+	}
+	if r.Pattern == "" {
+		return fmt.Errorf("rule %q: pattern is required", r.Name)
+	}
+	if _, err := regexp.Compile(r.Pattern); err != nil {
+		return fmt.Errorf("rule %q: invalid pattern: %w", r.Name, err)
+	}
+	if r.Sense != "must_match" && r.Sense != "must_not_match" {
+		return fmt.Errorf("rule %q: sense must be must_match or must_not_match", r.Name)
+	}
+	if r.Scope != "" && r.Scope != "tree" && r.Scope != "diff" {
+		return fmt.Errorf("rule %q: scope must be tree or diff", r.Name)
+	}
+	if r.Message == "" {
+		return fmt.Errorf("rule %q: message is required", r.Name)
+	}
+	if _, err := ParseTier(r.Tier); err != nil {
+		return fmt.Errorf("rule %q: %w", r.Name, err)
 	}
 	return nil
 }
